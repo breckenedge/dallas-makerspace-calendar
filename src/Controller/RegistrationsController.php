@@ -36,19 +36,46 @@ class RegistrationsController extends AppController
 
     public function event($eventId = null)
     {
-        if ($this->Auth->user() && $this->Registrations->exists([
-                'event_id' => $eventId,
-                'ad_username' => $this->Auth->user('samaccountname')
-            ])) {
-            $registration = $this->Registrations->find('all')
-                ->select(['id'])
-                ->where([
-                    'event_id' => $eventId,
-                    'ad_username' => $this->Auth->user('samaccountname')
-                ])
-                ->first();
+        if ($this->Auth->user()) {
+            $username = $this->Auth->user('samaccountname');
 
-            return $this->redirect(['action' => 'view', $registration->id]);
+            $activeRegistrationConditions = [
+                'event_id' => $eventId,
+                'ad_username' => $username,
+                'status !=' => 'cancelled',
+            ];
+
+            if ($this->Registrations->exists($activeRegistrationConditions)) {
+                $registration = $this->Registrations->find('all')
+                    ->select(['id'])
+                    ->where($activeRegistrationConditions)
+                    ->first();
+
+                return $this->redirect(['action' => 'view', $registration->id]);
+            }
+
+            // Cancelled-with-payment: route through the organizer. The cancel
+            // path now refuses to mark a row cancelled unless its refund went
+            // through, so this case should only arise when an admin (who can
+            // override the cancellation cutoff) cancels on someone's behalf —
+            // we still want a human in the loop before charging the card again.
+            $paidCancelledConditions = [
+                'event_id' => $eventId,
+                'ad_username' => $username,
+                'status' => 'cancelled',
+                'transaction_id IS NOT' => null,
+            ];
+
+            if ($this->Registrations->exists($paidCancelledConditions)) {
+                $registration = $this->Registrations->find('all')
+                    ->select(['id'])
+                    ->where($paidCancelledConditions)
+                    ->first();
+
+                $this->Flash->error('You previously paid for and cancelled this registration. Please contact the event organizer to re-register so we can confirm your refund first.');
+
+                return $this->redirect(['action' => 'view', $registration->id]);
+            }
         }
 
         $this->Events = TableRegistry::get('Events');
@@ -274,11 +301,28 @@ class RegistrationsController extends AppController
             if ($now > $event->getSubject()->entity->event->attendee_cancellation && !parent::inAdminstrativeGroup($this->Auth->user(), 'Calendar Admins')) {
                 $this->Flash->error('Your RSVP to this event could not be cancelled. The cutoff time for cancellations has already passed.');
                 $event->stopPropagation();
-            } else {
-                $event->getSubject()->entity->status = 'cancelled';
-                $this->Flash->success('Your RSVP to this event has been cancelled.');
-                $this->Registrations->refund($this->passedArgs[0]);
+                return;
             }
+
+            // Attempt the refund FIRST and only flip status to cancelled if it
+            // succeeded. Otherwise the registration can end up cancelled while
+            // the user is still holding a charge — and after my recent change
+            // permitting re-registration of cancelled rows, that opens a
+            // double-charge path.
+            try {
+                $refunded = $this->Registrations->refund($this->passedArgs[0]);
+            } catch (\Exception $e) {
+                $refunded = false;
+            }
+
+            if (!$refunded) {
+                $this->Flash->error('Your RSVP could not be cancelled — we were unable to process the refund. Please contact the event organizer.');
+                $event->stopPropagation();
+                return;
+            }
+
+            $event->getSubject()->entity->status = 'cancelled';
+            $this->Flash->success('Your RSVP to this event has been cancelled.');
         });
 
         $this->Crud->on('afterSave', function (Event $event) {

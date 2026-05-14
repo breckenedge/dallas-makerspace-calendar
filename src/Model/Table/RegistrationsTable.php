@@ -69,19 +69,22 @@ class RegistrationsTable extends Table
             ])
             ->requirePresence('email', 'create')
             ->notEmpty('email')
-            ->add('email', ['unique' => [
-                'rule' => ['validateUnique', ['scope' => 'event_id']],
-                'provider' => 'table',
+            ->add('email', 'unique', [
+                'rule' => function ($value, $context) {
+                    return !$this->existsActiveRegistration('email', $value, $context);
+                },
                 'message' => 'The email address is already associated with a registration for this event.'
-            ]]);
+            ]);
 
         $validator
             ->allowEmpty('phone');
 
         $validator
             ->allowEmpty('ad_username')
-            ->add('ad_username', ['unique' => [
-                'rule' => ['validateUnique', ['scope' => 'event_id']], 'provider' => 'table']
+            ->add('ad_username', 'unique', [
+                'rule' => function ($value, $context) {
+                    return !$this->existsActiveRegistration('ad_username', $value, $context);
+                },
             ]);
 
         $validator
@@ -157,6 +160,30 @@ class RegistrationsTable extends Table
         }
 
         return true;
+    }
+
+    /**
+     * Validator helper: checks if another non-cancelled registration exists for
+     * the same event with the same value in the given field. Cancelled rows are
+     * excluded so users can re-register after cancelling.
+     */
+    private function existsActiveRegistration($field, $value, $context)
+    {
+        if (empty($context['data']['event_id'])) {
+            return false;
+        }
+
+        $conditions = [
+            $field => $value,
+            'event_id' => $context['data']['event_id'],
+            'status !=' => 'cancelled',
+        ];
+
+        if (!empty($context['data']['id'])) {
+            $conditions['id !='] = $context['data']['id'];
+        }
+
+        return $this->exists($conditions);
     }
 
     /**
