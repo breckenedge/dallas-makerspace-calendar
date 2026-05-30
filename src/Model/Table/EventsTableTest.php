@@ -70,13 +70,69 @@ class EventsTableTest extends TestCase
     }
 
     /**
-     * Test validationDefault method
-     *
-     * @return void
+     * Run the table's default validator against a single field, in update
+     * mode so the create-only requirePresence rules don't fire. This isolates
+     * the no-emoji check from unrelated rules (event_start honorarium check,
+     * datetime behaviors, room availability) that would otherwise need a
+     * fully-populated payload and additional fixtures.
      */
-    public function testValidationDefault()
+    private function validateField(string $field, $value): array
     {
-        $this->markTestIncomplete('Not implemented yet.');
+        $errors = $this->EventsTable->getValidator()->errors([$field => $value], false);
+        return $errors[$field] ?? [];
+    }
+
+    /**
+     * Production runs utf8mb3, so 4-byte UTF-8 characters (emoji) can't be
+     * stored. The validator must reject them up-front so the user sees a
+     * field-level error instead of losing their submission to a 500.
+     */
+    public function testValidationRejectsEmojiInName()
+    {
+        $errors = $this->validateField('name', 'Soldering 101 🔥');
+        $this->assertArrayHasKey('noFourByteChars', $errors);
+    }
+
+    public function testValidationRejectsEmojiInShortDescription()
+    {
+        $errors = $this->validateField('short_description', 'Bring goggles 👀');
+        $this->assertArrayHasKey('noFourByteChars', $errors);
+    }
+
+    public function testValidationRejectsEmojiInLongDescription()
+    {
+        $errors = $this->validateField('long_description', "Line 1\nLine 2 with rocket 🚀");
+        $this->assertArrayHasKey('noFourByteChars', $errors);
+    }
+
+    public function testValidationRejectsEmojiInAdvisories()
+    {
+        $errors = $this->validateField('advisories', 'Hot surface ♨️🔥');
+        $this->assertArrayHasKey('noFourByteChars', $errors);
+    }
+
+    /**
+     * 3-byte UTF-8 (BMP) characters like accented Latin, CJK, and curly
+     * quotes are fine — utf8mb3 can store them. Don't over-reject.
+     */
+    public function testValidationAcceptsThreeByteUtf8()
+    {
+        $this->assertArrayNotHasKey(
+            'noFourByteChars',
+            $this->validateField('name', 'Café — résumé workshop 日本語')
+        );
+        $this->assertArrayNotHasKey(
+            'noFourByteChars',
+            $this->validateField('short_description', 'Diacritics and CJK are fine')
+        );
+        $this->assertArrayNotHasKey(
+            'noFourByteChars',
+            $this->validateField('long_description', 'Em dash — and curly quotes "" are BMP')
+        );
+        $this->assertArrayNotHasKey(
+            'noFourByteChars',
+            $this->validateField('advisories', 'Nothing fancy')
+        );
     }
 
     /**

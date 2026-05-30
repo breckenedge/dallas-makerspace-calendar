@@ -86,24 +86,39 @@ class EventsTable extends Table
      */
     public function validationDefault(Validator $validator)
     {
+        // The events table is utf8mb3 in production, which cannot store
+        // 4-byte UTF-8 characters (emoji and other supplementary-plane code
+        // points). Without this check, MySQL aborts the INSERT and the user
+        // loses everything they typed. Reject up front so they keep the form.
+        $noFourByteChars = [
+            'rule' => function ($value) {
+                return is_string($value) && !preg_match('/[\x{10000}-\x{10FFFF}]/u', $value);
+            },
+            'message' => 'Emoji and other special characters are not supported. Please remove them and try again.',
+        ];
+
         $validator
             ->integer('id')
             ->allowEmpty('id', 'create');
 
         $validator
             ->requirePresence('name', 'create')
-            ->notEmpty('name');
+            ->notEmpty('name')
+            ->add('name', 'noFourByteChars', $noFourByteChars);
 
         $validator
             ->requirePresence('short_description', 'create')
-            ->notEmpty('short_description');
+            ->notEmpty('short_description')
+            ->add('short_description', 'noFourByteChars', $noFourByteChars);
 
         $validator
             ->requirePresence('long_description', 'create')
-            ->allowEmpty('long_description');
+            ->allowEmpty('long_description')
+            ->add('long_description', 'noFourByteChars', $noFourByteChars);
 
         $validator
-            ->allowEmpty('advisories');
+            ->allowEmpty('advisories')
+            ->add('advisories', 'noFourByteChars', $noFourByteChars);
 
         $validator
             ->dateTime('event_start')
