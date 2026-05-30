@@ -18,3 +18,4 @@ config/Migrations/schema-dump-default.lock
 /e2e/test-results
 /e2e/blob-report
 /e2e/playwright/.cache
+CLAUDE.local.md
