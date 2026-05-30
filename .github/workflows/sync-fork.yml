@@ -1,0 +1,21 @@
+name: Sync master with upstream
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily at 06:00 UTC
+  workflow_dispatch:        # allow manual runs from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fast-forward master from Dallas-Makerspace/calendar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh repo sync breckenedge/dallas-makerspace-calendar \
+            --source Dallas-Makerspace/calendar \
+            --branch master
